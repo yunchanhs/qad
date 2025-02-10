@@ -378,8 +378,8 @@ if __name__ == "__main__":
                                 print(f"[{ticker}] 매수 불가 (원화 부족)")
                         else:
                             print(f"[{ticker}] 매수 조건 불충족")
-    except Exception as e:
-                print(f"[{ticker}] 처리 중 에러 발생: {e}")
+                except Exception as e:
+                    print(f"[{ticker}] 처리 중 에러 발생: {e}")
 
-except KeyboardInterrupt:
-    print("프로그램이 종료되었습니다.")
+    except KeyboardInterrupt:
+        print("프로그램이 종료되었습니다.")

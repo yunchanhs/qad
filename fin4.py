@@ -310,56 +310,61 @@ if __name__ == "__main__":
     top_tickers = get_top_tickers(n=10)
     print(f"거래량 상위 코인: {top_tickers}")
     models = {ticker: train_transformer_model(ticker) for ticker in top_tickers}
+    recent_surge_tickers = {}  # 급상승 코인 저장
 
     try:
         while True:
-            # 1. 상위 코인 업데이트 (6시간마다)
-            if datetime.now().hour % 6 == 0 and datetime.now().minute == 0:
+            now = datetime.now()
+
+            # ✅ 1. 상위 코인 업데이트 (6시간마다)
+            if now.hour % 6 == 0 and now.minute == 0:
                 top_tickers = get_top_tickers(n=10)
-                print(f"[{datetime.now()}] 상위 코인 업데이트: {top_tickers}")
+                print(f"[{now}] 상위 코인 업데이트: {top_tickers}")
 
                 # 새롭게 추가된 코인 모델 학습
                 for ticker in top_tickers:
                     if ticker not in models:
                         models[ticker] = train_transformer_model(ticker)
 
-            # 2. 급상승 코인 감지
+            # ✅ 2. 급상승 코인 감지 및 업데이트
             surge_tickers = detect_surge_tickers(threshold=0.03)
 
-            # ✅ [수정] 최근 급상승 코인도 포함하여 매수 조건 검사
-            target_tickers = set(top_tickers) | set(surge_tickers) | set(recent_surge_tickers)
+            # 📌 급상승 코인 저장 및 모델 학습
+            for ticker in surge_tickers:
+                if ticker not in recent_surge_tickers:
+                    print(f"[{now}] 급상승 감지: {ticker}")
+                    recent_surge_tickers[ticker] = now
+                    if ticker not in models:
+                        models[ticker] = train_transformer_model(ticker, epochs=10)
+
+            # ✅ 3. 최종 매수 대상 선정 (상위 10개 + 급상승 코인 포함)
+            target_tickers = set(top_tickers) | set(recent_surge_tickers.keys())  # 🔥 급상승 코인 확실히 포함!
 
             for ticker in target_tickers:
-                # ✅ [추가] 급상승 감지된 경우, 지속 감시
-                if ticker in surge_tickers:
-                    if ticker not in recent_surge_tickers:
-                        print(f"[{datetime.now()}] 급상승 감지: {ticker}")
-                        recent_surge_tickers[ticker] = datetime.now()
-                        if ticker not in models:
-                            models[ticker] = train_transformer_model(ticker, epochs=10)  # 빠른 학습
+                last_trade_time = recent_trades.get(ticker, datetime.min)
+                cooldown_limit = SURGE_COOLDOWN_TIME if ticker in recent_surge_tickers else COOLDOWN_TIME
 
-                # ✅ [수정] 쿨다운 체크
-                if ticker in recent_trades and datetime.now() - recent_trades[ticker] < COOLDOWN_TIME:
-                    continue
+                # ✅ [쿨다운 적용] 너무 빠른 재거래 방지
+                if now - last_trade_time < cooldown_limit:
+                    continue  
 
                 try:
-                    # ✅ [DEBUG] 매수 조건 로그 추가
-                    print(f"[DEBUG] {ticker} 매수 조건 검사 중")
-
+                    # 🔍 AI 및 지표 계산
                     ml_signal = get_ml_signal(ticker, models[ticker])
                     macd, signal = get_macd(ticker)
                     rsi = get_rsi(ticker)
                     adx = get_adx(ticker)
                     current_price = pyupbit.get_current_price(ticker)
 
-                    # ✅ [DEBUG] 매매 지표 출력
+                    # 🛠 [DEBUG] 로그 추가
+                    print(f"[DEBUG] {ticker} 매수 조건 검사")
                     print(f" - ML 신호: {ml_signal:.4f}")
                     print(f" - MACD: {macd:.4f}, Signal: {signal:.4f}")
                     print(f" - RSI: {rsi:.2f}")
                     print(f" - ADX: {adx:.2f}")
                     print(f" - 현재 가격: {current_price:.2f}")
 
-                    # 매수 조건
+                    # ✅ 4. 매수 조건 검사 (급상승 포함)
                     if isinstance(ml_signal, (int, float)) and 0 <= ml_signal <= 1:
                         if ml_signal > ML_THRESHOLD and macd > signal and rsi < 40 and adx > 20:
                             krw_balance = get_balance("KRW")
@@ -370,7 +375,7 @@ if __name__ == "__main__":
                                 if buy_result:
                                     entry_prices[ticker] = current_price
                                     highest_prices[ticker] = current_price
-                                    recent_trades[ticker] = datetime.now()
+                                    recent_trades[ticker] = now
                                     print(f"[{ticker}] 매수 완료: {buy_amount:.2f}원, 가격: {current_price:.2f}")
                                 else:
                                     print(f"[{ticker}] 매수 요청 실패")
@@ -379,13 +384,13 @@ if __name__ == "__main__":
                         else:
                             print(f"[{ticker}] 매수 조건 불충족")
 
-                    # 매도 조건
+                    # ✅ 5. 매도 조건 검사
                     elif ticker in entry_prices:
                         entry_price = entry_prices[ticker]
                         highest_prices[ticker] = max(highest_prices[ticker], current_price)
                         change_ratio = (current_price - entry_price) / entry_price
 
-                        # 손절 조건
+                        # 손절 조건 보완
                         if change_ratio <= STOP_LOSS_THRESHOLD:
                             if ml_signal > ML_THRESHOLD:
                                 print(f"[{ticker}] 손실 상태지만 AI 신호 긍정적, 매도 보류.")
@@ -410,8 +415,6 @@ if __name__ == "__main__":
 
                 except Exception as e:
                     print(f"[{ticker}] 처리 중 에러 발생: {e}")
-
-            time.sleep(60)  # 1분마다 반복
 
     except KeyboardInterrupt:
         print("프로그램이 종료되었습니다.")

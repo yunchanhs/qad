@@ -58,9 +58,6 @@ def detect_surge_tickers(threshold=0.03):
 def get_ohlcv_cached(ticker, interval="minute60"):
     time.sleep(0.2)  # 요청 간격 조절
     return pyupbit.get_ohlcv(ticker, interval=interval)
-
-def detect_surge_tickers():
-    tickers = pyupbit.get_tickers(fiat="KRW")  # 한국 원화 기준 코인 목록 가져오기
     
 # 머신러닝 모델 정의
 class TransformerModel(nn.Module):

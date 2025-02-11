@@ -23,6 +23,7 @@ ML_SELL_THRESHOLD = 0.3  # AI 신호 매도 기준
 STOP_LOSS_THRESHOLD = -0.05  # 손절 (-5%)
 TAKE_PROFIT_THRESHOLD = 0.1  # 익절 (10%)
 COOLDOWN_TIME = timedelta(minutes=5)  # 동일 코인 재거래 쿨다운 시간
+SURGE_COOLDOWN_TIME = timedelta(minutes=10) # 급등 코인 쿨다운 시간
 
 # 계좌 정보 저장
 entry_prices = {}  # 매수한 가격 저장
@@ -213,12 +214,16 @@ class TradingDataset(Dataset):
         y = self.data.iloc[idx + self.seq_len]['future_return']
         return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
-def train_transformer_model(ticker, epochs=30):  # epochs 기본값을 50으로 설정
-    print(f"모델 학습 시작: {ticker}")  # 모델 학습 시작 시 출력
+def train_transformer_model(ticker, epochs=30):
+    print(f"모델 학습 시작: {ticker}")
     data = get_features(ticker)
+
+    if data is None:
+        return None
+
     seq_len = 30
     dataset = TradingDataset(data, seq_len)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=6, pin_memory=True) # Ryzen 5600X에 맞게 조절
 
     input_dim = 6
     d_model = 64
@@ -230,16 +235,19 @@ def train_transformer_model(ticker, epochs=30):  # epochs 기본값을 50으로 
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    for epoch in range(1, epochs + 1):  # epochs 기본값 50으로 설정
+    # CPU 최적화 (MKL, OpenMP 활용)
+    torch.set_num_threads(12) # Ryzen 5600X 코어 수에 맞게 조절
+
+    for epoch in range(1, epochs + 1):
         for x_batch, y_batch in dataloader:
             optimizer.zero_grad()
             output = model(x_batch)
             loss = criterion(output.squeeze(), y_batch)
             loss.backward()
             optimizer.step()
-        print(f'Epoch [{epoch}/{epochs}], Loss: {loss.item():.4f}')  # 전체 epoch 수를 출력
+        print(f'Epoch [{epoch}/{epochs}], Loss: {loss.item():.4f}')
 
-    print(f"모델 학습 완료: {ticker}")  # 학습 완료 시 출력
+    print(f"모델 학습 완료: {ticker}")
     return model
 
 def get_ml_signal(ticker, model):

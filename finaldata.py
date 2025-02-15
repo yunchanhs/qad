@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 from torch.utils.data import Dataset, DataLoader
+import datetime
 
 # API 키 설정
 ACCESS_KEY = "J8iGqPwfjkX7Yg9bdzwFGkAZcTPU7rElXRozK7O4"
@@ -18,7 +19,6 @@ last_trained_time = None  # 마지막 학습 시간
 TRAINING_INTERVAL = timedelta(hours=8)  # 6시간마다 재학습
 
 # 매매 전략 관련 임계값
-ML_THRESHOLD = 0.7  # AI 신호 매수 기준
 ML_SELL_THRESHOLD = 0.3  # AI 신호 매도 기준
 STOP_LOSS_THRESHOLD = -0.05  # 손절 (-5%)
 TAKE_PROFIT_THRESHOLD = 0.1  # 익절 (10%)
@@ -31,7 +31,31 @@ highest_prices = {}  # 매수 후 최고 가격 저장
 recent_trades = {}  # 최근 거래 기록
 recent_surge_tickers = {}  # 최근 급상승 감지 코인 저장
 
-def get_top_tickers(n=10):
+def adjust_ml_threshold():
+    """시장 변동성에 따라 ML_THRESHOLD 자동 조정 (완화된 기준)"""
+    recent_volatility = np.std(
+        [pyupbit.get_ohlcv(ticker, interval="minute5", count=50)['close'].pct_change().dropna().values 
+         for ticker in get_top_tickers()]
+    )
+    
+    global ML_THRESHOLD
+    if recent_volatility > 0.02:  # 변동성이 크면 더 적극적으로
+        ML_THRESHOLD = 0.6  # 기존 0.65 → 0.6 (더 완화)
+    elif recent_volatility < 0.01:  # 변동성이 작아도 더 완화
+        ML_THRESHOLD = 0.7  # 기존 0.75 → 0.7 (보수적이지만 완화)
+    else:
+        ML_THRESHOLD = 0.65  # 기본값도 완화 (기존 0.7 → 0.65)
+    
+    print(f"현재 시장 변동성: {recent_volatility:.4f}, ML_THRESHOLD 조정: {ML_THRESHOLD}")
+
+# ✅ now 변수를 정의해야 오류 해결됨
+now = datetime.datetime.now()
+
+# 메인 루프 내에서 주기적으로 실행
+if now.minute % 10 == 0:  # 10분마다 갱신
+    adjust_ml_threshold()
+
+def get_top_tickers(n=30):
     """거래량 상위 n개 코인을 선택"""
     tickers = pyupbit.get_tickers(fiat="KRW")
     volumes = []
@@ -213,7 +237,7 @@ class TradingDataset(Dataset):
         y = self.data.iloc[idx + self.seq_len]['future_return']
         return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
-def train_transformer_model(ticker, epochs=30):
+def train_transformer_model(ticker, epochs=20):
     print(f"모델 학습 시작: {ticker}")
     data = get_features(ticker)
 
@@ -238,7 +262,7 @@ def train_transformer_model(ticker, epochs=30):
 
     model = TransformerModel(input_dim, d_model, num_heads, num_layers, output_dim)
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
 
     # CPU 최적화 (MKL, OpenMP 활용)
     torch.set_num_threads(12) # Ryzen 5600X 코어 수에 맞게 조절
@@ -293,7 +317,7 @@ def backtest(ticker, model, initial_balance=1_000_000, fee=0.0005):
     position = 0
     entry_price = 0
 
-    for i in range(30, len(data) - 1):
+    for i in range(20, len(data) - 1):
         x_input = torch.tensor(data.iloc[i-30:i][['macd', 'signal', 'rsi', 'adx', 'atr', 'return']].values,
                                dtype=torch.float32).unsqueeze(0)
         signal = model(x_input).item()
@@ -331,7 +355,7 @@ if __name__ == "__main__":
 
             # ✅ 1. 상위 코인 업데이트 (6시간마다)
             if now.hour % 6 == 0 and now.minute == 0:
-                top_tickers = get_top_tickers(n=10)
+                top_tickers = get_top_tickers(n=30)
                 print(f"[{now}] 상위 코인 업데이트: {top_tickers}")
 
                 # 새롭게 추가된 코인 모델 학습

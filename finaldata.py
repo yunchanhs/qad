@@ -237,7 +237,7 @@ class TradingDataset(Dataset):
         y = self.data.iloc[idx + self.seq_len]['future_return']
         return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
-def train_transformer_model(ticker, epochs=20):
+def train_transformer_model(ticker, epochs=50):
     print(f"모델 학습 시작: {ticker}")
     data = get_features(ticker)
 
@@ -262,7 +262,7 @@ def train_transformer_model(ticker, epochs=20):
 
     model = TransformerModel(input_dim, d_model, num_heads, num_layers, output_dim)
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.003)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     # CPU 최적화 (MKL, OpenMP 활용)
     torch.set_num_threads(12) # Ryzen 5600X 코어 수에 맞게 조절
@@ -317,7 +317,7 @@ def backtest(ticker, model, initial_balance=1_000_000, fee=0.0005):
     position = 0
     entry_price = 0
 
-    for i in range(20, len(data) - 1):
+    for i in range(50, len(data) - 1):
         x_input = torch.tensor(data.iloc[i-30:i][['macd', 'signal', 'rsi', 'adx', 'atr', 'return']].values,
                                dtype=torch.float32).unsqueeze(0)
         signal = model(x_input).item()

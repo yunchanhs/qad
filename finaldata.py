@@ -19,6 +19,7 @@ last_trained_time = None  # 마지막 학습 시간
 TRAINING_INTERVAL = timedelta(hours=8)  # 6시간마다 재학습
 
 # 매매 전략 관련 임계값
+ML_THRESHOLD = 0.01
 ML_SELL_THRESHOLD = 0.3  # AI 신호 매도 기준
 STOP_LOSS_THRESHOLD = -0.05  # 손절 (-5%)
 TAKE_PROFIT_THRESHOLD = 0.1  # 익절 (10%)
@@ -30,30 +31,6 @@ entry_prices = {}  # 매수한 가격 저장
 highest_prices = {}  # 매수 후 최고 가격 저장
 recent_trades = {}  # 최근 거래 기록
 recent_surge_tickers = {}  # 최근 급상승 감지 코인 저장
-
-def adjust_ml_threshold():
-    """시장 변동성에 따라 ML_THRESHOLD 자동 조정 (완화된 기준)"""
-    recent_volatility = np.std(
-        [pyupbit.get_ohlcv(ticker, interval="minute5", count=50)['close'].pct_change().dropna().values 
-         for ticker in get_top_tickers()]
-    )
-    
-    global ML_THRESHOLD
-    if recent_volatility > 0.02:  # 변동성이 크면 더 적극적으로
-        ML_THRESHOLD = 0.6  # 기존 0.65 → 0.6 (더 완화)
-    elif recent_volatility < 0.01:  # 변동성이 작아도 더 완화
-        ML_THRESHOLD = 0.7  # 기존 0.75 → 0.7 (보수적이지만 완화)
-    else:
-        ML_THRESHOLD = 0.65  # 기본값도 완화 (기존 0.7 → 0.65)
-    
-    print(f"현재 시장 변동성: {recent_volatility:.4f}, ML_THRESHOLD 조정: {ML_THRESHOLD}")
-
-# ✅ now 변수를 정의해야 오류 해결됨
-now = datetime.datetime.now()
-
-# 메인 루프 내에서 주기적으로 실행
-if now.minute % 10 == 0:  # 10분마다 갱신
-    adjust_ml_threshold()
 
 def get_top_tickers(n=30):
     """거래량 상위 n개 코인을 선택"""
@@ -83,7 +60,7 @@ def detect_surge_tickers(threshold=0.03):
     return surge_tickers
 
 def get_ohlcv_cached(ticker, interval="minute60"):
-    time.sleep(0.2)  # 요청 간격 조절
+    time.sleep(0.5)  # 요청 간격 조절
     return pyupbit.get_ohlcv(ticker, interval=interval)
     
 # 머신러닝 모델 정의
@@ -103,7 +80,7 @@ class TransformerModel(nn.Module):
 # 지표 계산 함수 (생략, 기존 코드 동일)
 # get_macd, get_rsi, get_adx, get_atr, get_features
 
-def get_macd(ticker):
+def get_macd(ticker, period=14):
     """주어진 코인의 MACD와 Signal 라인을 계산하는 함수"""
     df = pyupbit.get_ohlcv(ticker, interval="minute5", count=200)  # 5분봉 데이터 가져오기
     df['short_ema'] = df['close'].ewm(span=12, adjust=False).mean()  # 12-period EMA
@@ -239,6 +216,13 @@ class TradingDataset(Dataset):
 
 def train_transformer_model(ticker, epochs=50):
     print(f"모델 학습 시작: {ticker}")
+    input_dim = 6
+    d_model = 64
+    num_heads = 8
+    num_layers = 2
+    output_dim = 1
+
+    model = TransformerModel(input_dim, d_model, num_heads, num_layers, output_dim)
     data = get_features(ticker)
 
     if data is None or data.empty:
@@ -251,16 +235,7 @@ def train_transformer_model(ticker, epochs=50):
     if len(dataset) == 0:
         print(f"경고: {ticker}의 데이터셋이 너무 작아서 학습을 진행할 수 없음.")
         return None
-    
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True, num_workers=2, pin_memory=True) # Ryzen 5600X에 맞게 조절
-
-    input_dim = 6
-    d_model = 64
-    num_heads = 8
-    num_layers = 2
-    output_dim = 1
-
-    model = TransformerModel(input_dim, d_model, num_heads, num_layers, output_dim)
+        
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 

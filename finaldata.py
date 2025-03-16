@@ -219,34 +219,22 @@ def train_transformer_model(ticker, epochs=50):
     input_dim = 6
     d_model = 64
     num_heads = 8
-    num_layers = 2
+    num_layers = 4
     output_dim = 1
 
     model = TransformerModel(input_dim, d_model, num_heads, num_layers, output_dim)
     data = get_features(ticker)
-
-    if data is None or data.empty:
-        print(f"경고: {ticker}의 데이터가 비어 있음. 모델 학습을 건너뜁니다.")
-        return None
-
     seq_len = 30
     dataset = TradingDataset(data, seq_len)
-    
-    if len(dataset) == 0:
-        print(f"경고: {ticker}의 데이터셋이 너무 작아서 학습을 진행할 수 없음.")
-        return None
-        
-    criterion = nn.MSELoss()
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    criterion = nn.HuberLoss(delta=1.0)  # Huber 손실 함수 사용
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-    # CPU 최적화 (MKL, OpenMP 활용)
-    torch.set_num_threads(12) # Ryzen 5600X 코어 수에 맞게 조절
 
     for epoch in range(1, epochs + 1):
         for x_batch, y_batch in dataloader:
             optimizer.zero_grad()
             output = model(x_batch)
-            loss = criterion(output.squeeze(), y_batch)
+            loss = criterion(output.view(-1), y_batch.view(-1))  # `.squeeze()` 대신 `.view(-1)`
             loss.backward()
             optimizer.step()
         print(f'Epoch [{epoch}/{epochs}], Loss: {loss.item():.4f}')
